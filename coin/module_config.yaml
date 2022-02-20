@@ -1,0 +1,92 @@
+version: 1
+accept_configuration:
+  condition: and
+  conditions:
+    - condition: property
+      property: host.compiler
+      equals_value: Yocto
+    - condition: property
+      property: target.arch
+      in_values: [TARGET1, TARGET2, TARGET3, TARGET4]
+
+environment: &environment
+  type: Group
+  instructions:
+    - type: EnvironmentVariable
+      variableName: MACHINE
+      variableValue: jetson-tx2-devkit
+      enable_if:
+        condition: property
+        property: target.arch
+        equals_value: TARGET1
+    - type: EnvironmentVariable
+      variableName: MACHINE
+      variableValue: apalis-imx6
+      enable_if:
+        condition: property
+        property: target.arch
+        equals_value: TARGET2
+    - type: EnvironmentVariable
+      variableName: MACHINE
+      variableValue: colibri-imx7
+      enable_if:
+        condition: property
+        property: target.arch
+        equals_value: TARGET3
+    - type: EnvironmentVariable
+      variableName: MACHINE
+      variableValue: intel-corei7-64
+      enable_if:
+        condition: property
+        property: target.arch
+        equals_value: TARGET4
+
+build_instructions:
+  - *environment
+  - type: SetBuildDirectory
+    directory: "{{.AgentWorkingDir}}/build"
+  - type: MakeDirectory
+    directory: "{{.BuildDir}}"
+  - type: ChangeDirectory
+    directory: "{{.BuildDir}}"
+  - type: EnvironmentVariable
+    variableName: DL_DIR
+    variableValue: "/mnt/yocto-cache/downloads"
+  - type: EnvironmentVariable
+    variableName: SOURCE_DIR
+    variableValue: "{{.SourceDir}}"
+  - type: WriteFile
+    fileContents: |
+      #!/bin/bash -xe
+      cat >> /home/qt/.ssh/config <<EOF
+      Host git.qt.io
+        IdentityFile "/home/qt/.ssh/test_farm_id_rsa"
+      EOF
+
+      # make hostname unique for NFS
+      sudo hostname $(hostname -s)-$(date +%s%N)
+
+      sudo mkdir -p /mnt/yocto-cache
+      sudo mount yocto-cache.ci.qt.io:/srv/yocto-cache /mnt/yocto-cache
+
+      ${SOURCE_DIR}/b2qt-init-build-env init --device ${MACHINE} --reference /mnt/yocto-cache/mirror --internal
+
+      source ./setup-environment.sh
+      export BB_ENV_EXTRAWHITE="$BB_ENV_EXTRAWHITE SSTATE_DIR DL_DIR"
+      export SSTATE_DIR=/mnt/yocto-cache/sstate-caches/$(sed -n -e "s/DISTRO_CODENAME.*\"\(.*\)\"/\1/p" ../sources/poky/meta-*/conf/distro/poky.conf)
+      bitbake meta-b2qt-embedded-qbsp
+      SDKMACHINE=x86_64-mingw32 bitbake meta-b2qt-embedded-qbsp
+
+      sudo umount /mnt/yocto-cache
+    filename: "{{.BuildDir}}/start-build"
+    fileMode: 420
+  - type: ExecuteCommand
+    command: ["chmod", "+x", "{{.BuildDir}}/start-build"]
+    userMessageOnFailure: "Could not add execution right to the start-build."
+  - type: ExecuteCommand
+    command: ["{{.BuildDir}}/start-build"]
+    maxTimeInSeconds: 28800
+    maxTimeBetweenOutput: 28800
+    userMessageOnFailure: "Build failed."
+
+test_instructions: []
